@@ -1,7 +1,7 @@
 'use client';
 import * as Phaser from 'phaser';
 import { FIELD, TEAM_COLORS, type Formation, type Player, type Team, type TeamId, type Point } from './types';
-import { allBodiesSettled, goalScorerAt, kickoffTeamAfterGoal, velocityFromPull, winnerAt } from './rules';
+import { allBodiesSettled, goalScorerAt, kickoffTeamAfterGoal, velocityFromPull, wakeAndLaunch, winnerAt } from './rules';
 
 type SceneStatus = { phase: string; activeTeam: TeamId; score: { red: number; blue: number }; selected: string | null };
 type SceneCallbacks = { onStatus?: (status: SceneStatus) => void; onGoal?: (team: TeamId, score: { red: number; blue: number }) => void; onWinner?: (team: TeamId) => void; onFormation?: (formation: Formation) => void };
@@ -135,7 +135,7 @@ export class KickScene extends Phaser.Scene {
     const velocity = velocityFromPull(dx, dy);
     this.selected = null; this.dragOrigin = null; this.pointerPoint = null;
     if (!velocity) { this.phase = 'ready'; this.notifyStatus(null); return; }
-    this.matter.body.setVelocity(token.body, velocity);
+    wakeAndLaunch(token.body, velocity, this.matter.body);
     this.phase = 'simulating'; this.restFrames = 0; this.simFrames = 0;
     this.notifyStatus(null);
   }
@@ -195,9 +195,11 @@ export class KickScene extends Phaser.Scene {
   private kickoffReset() {
     for (const t of this.tokens) {
       const position = this.opts.formations[t.player.team][t.player.id] || { x: t.player.team === 'red' ? 180 : 820, y: 300 };
-      this.matter.body.setPosition(t.body, position); this.matter.body.setVelocity(t.body, { x: 0, y: 0 }); this.matter.body.setAngularVelocity(t.body, 0); this.matter.body.setStatic(t.body, false);
+      this.matter.body.setStatic(t.body, false); this.matter.body.set(t.body, 'isSleeping', false);
+      this.matter.body.setPosition(t.body, position); this.matter.body.setVelocity(t.body, { x: 0, y: 0 }); this.matter.body.setAngularVelocity(t.body, 0);
     }
-    this.matter.body.setPosition(this.ball, { x: 500, y: 300 }); this.matter.body.setVelocity(this.ball, { x: 0, y: 0 }); this.matter.body.setStatic(this.ball, false);
+    this.matter.body.setStatic(this.ball, false); this.matter.body.set(this.ball, 'isSleeping', false);
+    this.matter.body.setPosition(this.ball, { x: 500, y: 300 }); this.matter.body.setVelocity(this.ball, { x: 0, y: 0 });
     // Any custom layout is kept, but invalid / too-close kickoff spots are corrected deterministically.
     for (let i = 0; i < this.tokens.length; i++) for (let j = i + 1; j < this.tokens.length; j++) {
       const a = this.tokens[i], b = this.tokens[j];

@@ -2,7 +2,17 @@ import { FIELD, type TeamId } from './types';
 
 export type Score = { red: number; blue: number };
 export type Velocity = { x: number; y: number };
-export type MovingBody = { velocity: Velocity; angularVelocity: number };
+export type MovingBody = { velocity: Velocity; angularVelocity: number; isSleeping?: boolean };
+type FlickPhysics<TBody> = {
+  set: (body: TBody, property: 'isSleeping', value: false) => void;
+  setVelocity: (body: TBody, velocity: Velocity) => void;
+};
+
+/** Matter does not wake a sleeping body when Body.setVelocity is called. */
+export function wakeAndLaunch<TBody>(body: TBody, velocity: Velocity, physics: FlickPhysics<TBody>): void {
+  physics.set(body, 'isSleeping', false);
+  physics.setVelocity(body, velocity);
+}
 
 /** Returns the scoring side only after the full ball has crossed a legal goal mouth. */
 export function goalScorerAt(ball: { x: number; y: number }): TeamId | null {
@@ -33,5 +43,5 @@ export function velocityFromPull(dx: number, dy: number): Velocity | null {
 }
 
 export function allBodiesSettled(bodies: MovingBody[], threshold = .16, angularThreshold = .04): boolean {
-  return bodies.every(body => Math.hypot(body.velocity.x, body.velocity.y) <= threshold && Math.abs(body.angularVelocity) <= angularThreshold);
+  return bodies.every(body => body.isSleeping === true || (Math.hypot(body.velocity.x, body.velocity.y) <= threshold && Math.abs(body.angularVelocity) <= angularThreshold));
 }
