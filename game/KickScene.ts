@@ -3,7 +3,9 @@ import * as Phaser from 'phaser';
 import { FIELD, TEAM_COLORS, type Formation, type Player, type Team, type TeamId, type Point } from './types';
 import { allBodiesSettled, goalScorerAt, kickoffTeamAfterGoal, velocityFromPull, winnerAt } from './rules';
 
-type SceneOptions = { mode: 'formation' | 'match'; teams: Team[]; formations: Record<TeamId, Formation>; editableTeam: TeamId; settings: { aimGuide: boolean; trajectory: boolean; reducedMotion: boolean } };
+type SceneStatus = { phase: string; activeTeam: TeamId; score: { red: number; blue: number }; selected: string | null };
+type SceneCallbacks = { onStatus?: (status: SceneStatus) => void; onGoal?: (team: TeamId, score: { red: number; blue: number }) => void; onWinner?: (team: TeamId) => void; onFormation?: (formation: Formation) => void };
+type SceneOptions = { mode: 'formation' | 'match'; teams: Team[]; formations: Record<TeamId, Formation>; editableTeam: TeamId; settings: { aimGuide: boolean; trajectory: boolean; reducedMotion: boolean }; callbacks: SceneCallbacks };
 type Token = { player: Player; body: MatterJS.BodyType; label: Phaser.GameObjects.Text; number: Phaser.GameObjects.Text };
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const palette = (team: Team) => {
@@ -35,7 +37,6 @@ export class KickScene extends Phaser.Scene {
   private celebrationFrames = 0;
   private score = { red: 0, blue: 0 };
   private lastGoal: TeamId | null = null;
-  private emitTimer = 0;
   private impacts: Array<{ x: number; y: number; life: number }> = [];
 
   constructor(options: SceneOptions) { super({ key: 'KickScene' }); this.opts = options; }
@@ -51,7 +52,7 @@ export class KickScene extends Phaser.Scene {
     this.input.on('pointermove', this.pointerMove, this);
     this.input.on('pointerup', this.pointerUp, this);
     this.matter.world.on('collisionstart', this.handleCollision, this);
-    this.events.emit('status', { phase: this.phase, activeTeam: this.activeTeam, score: this.score, selected: null });
+    this.notifyStatus(null);
   }
   private drawField() {
     const g = this.fieldG; g.clear();
@@ -103,7 +104,7 @@ export class KickScene extends Phaser.Scene {
     const token = this.hitToken(pointer.worldX, pointer.worldY, this.activeTeam);
     if (!token) return;
     this.selected = token; this.dragOrigin = { x: pointer.worldX, y: pointer.worldY }; this.pointerPoint = this.dragOrigin; this.phase = 'aiming';
-    this.events.emit('status', { phase: this.phase, activeTeam: this.activeTeam, score: this.score, selected: token.player.id });
+    this.notifyStatus(token.player.id);
   }
   private hitToken(x: number, y: number, team: TeamId) {
     return [...this.tokens].reverse().find(t => t.player.team === team && Phaser.Math.Distance.Between(x, y, t.body.position.x, t.body.position.y) <= FIELD.playerRadius + 8) || null;
@@ -128,15 +129,18 @@ export class KickScene extends Phaser.Scene {
       this.phase = 'formation'; this.selected = null; this.dragOrigin = null;
       const formation: Formation = {};
       for (const t of this.tokens) formation[t.player.id] = { x: Math.round(t.body.position.x), y: Math.round(t.body.position.y) };
-      this.events.emit('formation-change', formation); return;
+      this.opts.callbacks.onFormation?.(formation); return;
     }
     const dx = this.dragOrigin.x - pointer.worldX, dy = this.dragOrigin.y - pointer.worldY;
     const velocity = velocityFromPull(dx, dy);
     this.selected = null; this.dragOrigin = null; this.pointerPoint = null;
-    if (!velocity) { this.phase = 'ready'; this.events.emit('status', { phase: this.phase, activeTeam: this.activeTeam, score: this.score, selected: null }); return; }
+    if (!velocity) { this.phase = 'ready'; this.notifyStatus(null); return; }
     this.matter.body.setVelocity(token.body, velocity);
     this.phase = 'simulating'; this.restFrames = 0; this.simFrames = 0;
-    this.events.emit('status', { phase: this.phase, activeTeam: this.activeTeam, score: this.score, selected: null });
+    this.notifyStatus(null);
+  }
+  private notifyStatus(selected: string | null) {
+    this.opts.callbacks.onStatus?.({ phase: this.phase, activeTeam: this.activeTeam, score: { ...this.score }, selected });
   }
   private handleCollision(event: MatterJS.IEventCollision<MatterJS.Engine>) {
     if (this.opts.settings.reducedMotion) return;
@@ -167,18 +171,16 @@ export class KickScene extends Phaser.Scene {
         if (this.restFrames >= 24 || this.simFrames > 720) {
           if (this.simFrames > 720) for (const b of bodies) { this.matter.body.setVelocity(b, { x: 0, y: 0 }); this.matter.body.setAngularVelocity(b, 0); }
           this.phase = 'ready'; this.activeTeam = this.activeTeam === 'red' ? 'blue' : 'red';
-          this.events.emit('status', { phase: this.phase, activeTeam: this.activeTeam, score: this.score, selected: null });
+          this.notifyStatus(null);
         }
       }
-      this.emitTimer += delta;
-      if (this.emitTimer > 240) { this.emitTimer = 0; this.events.emit('motion', { ball: this.ball.position, activeTeam: this.activeTeam }); }
     }
     if (this.phase === 'celebration') {
       this.celebrationFrames++;
       if (this.celebrationFrames > 100) {
         const winner = winnerAt(this.score);
-        if (winner) { this.phase = 'over'; this.events.emit('match-over', { winner, score: this.score }); }
-        else { this.kickoffReset(); this.phase = 'ready'; this.activeTeam = kickoffTeamAfterGoal(this.lastGoal!); this.events.emit('status', { phase: this.phase, activeTeam: this.activeTeam, score: this.score, selected: null }); }
+        if (winner) { this.phase = 'over'; this.opts.callbacks.onWinner?.(winner); }
+        else { this.kickoffReset(); this.phase = 'ready'; this.activeTeam = kickoffTeamAfterGoal(this.lastGoal!); this.notifyStatus(null); }
       }
     }
     this.renderBoard();
@@ -188,7 +190,7 @@ export class KickScene extends Phaser.Scene {
     this.phase = 'celebration'; this.celebrationFrames = 0; this.lastGoal = team; this.score[team] += 1;
     for (const t of this.tokens) { this.matter.body.setVelocity(t.body, { x: 0, y: 0 }); this.matter.body.setStatic(t.body, true); }
     this.matter.body.setVelocity(this.ball, { x: 0, y: 0 }); this.matter.body.setStatic(this.ball, true);
-    this.events.emit('goal', { team, score: { ...this.score } });
+    this.opts.callbacks.onGoal?.(team, { ...this.score });
   }
   private kickoffReset() {
     for (const t of this.tokens) {

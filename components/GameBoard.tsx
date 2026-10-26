@@ -11,13 +11,21 @@ export default function GameBoard(props: Props) {
   const callbacks = useRef(props); callbacks.current = props;
   useEffect(() => {
     if (!host.current) return;
-    const scene = new KickScene({ mode: props.mode, teams: props.teams, formations: props.formations, editableTeam: props.editableTeam, settings: props.settings });
+    const scene = new KickScene({
+      mode: props.mode,
+      teams: props.teams,
+      formations: props.formations,
+      editableTeam: props.editableTeam,
+      settings: props.settings,
+      callbacks: {
+        onStatus: status => callbacks.current.onStatus?.(status),
+        onGoal: (team, score) => callbacks.current.onGoal?.(team, score),
+        onWinner: team => callbacks.current.onWinner?.(team),
+        onFormation: formation => callbacks.current.onFormation?.(formation),
+      },
+    });
     const game = new Phaser.Game({ type: Phaser.AUTO, parent: host.current, width: 1000, height: 600, backgroundColor: '#0c3929', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, render: { antialias: true, roundPixels: true }, physics: { default: 'matter', matter: { gravity: { x: 0, y: 0 }, debug: false, enableSleeping: true } }, scene: [scene], input: { mouse: { preventDefaultDown: true } } });
-    scene.events.on('status', (s: BoardStatus) => callbacks.current.onStatus?.(s));
-    scene.events.on('goal', (g: { team: TeamId; score: { red: number; blue: number } }) => callbacks.current.onGoal?.(g.team, g.score));
-    scene.events.on('match-over', (g: { winner: TeamId }) => callbacks.current.onWinner?.(g.winner));
-    scene.events.on('formation-change', (f: Formation) => callbacks.current.onFormation?.(f));
-    return () => { scene.events.removeAllListeners(); game.destroy(true); };
+    return () => { game.destroy(true); };
   // Scene intentionally mounts once per board mode. Dynamic values are updated via callback refs.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.mode]);
